@@ -1,136 +1,98 @@
+# This defines a compatibility shim for the `trap` command found in other shells like bash and zsh.
 
 function __trap_translate_signal
-	set upper (echo $argv[1]|tr a-z A-Z)
-	if expr $upper : 'SIG.*' >/dev/null
-		echo $upper | cut -c 4-
-	else
-		echo $upper
-	end
+    set -l upper (echo $argv[1]|tr a-z A-Z)
+    string replace -r '^SIG' '' -- $upper
 end
 
 function __trap_switch
+    switch $argv[1]
+        case EXIT exit
+            echo --on-event fish_exit
 
-	switch $argv[1]
-		case EXIT
-			echo --on-exit %self
-
-		case '*'
-			echo --on-signal $argv[1]
-	end
-
+        case '*'
+            echo --on-signal $argv[1]
+    end
 end
 
-function trap -d 'Perform an action when the shell recives a signal'
+function trap -d 'Perform an action when the shell receives a signal'
+    set -l options h/help l/list-signals p/print
+    argparse -n trap $options -- $argv
+    or return
 
-	set -l mode
-	set -l cmd
-	set -l sig
-	set -l shortopt
-	set -l longopt
+    if set -q _flag_help
+        __fish_print_help trap
+        return 0
+    end
 
-	set -l shortopt -o lph
-	set -l longopt
-	if not getopt -T >/dev/null
-		set longopt -l print,help,list-signals
-	end
+    set -l mode
+    set -l cmd
+    set -l sig
 
-	if not getopt -n type -Q $shortopt $longopt -- $argv >/dev/null
-		return 1
-	end
+    # Determine the mode based on either an explicit flag or the non-flag args.
+    if set -q _flag_print
+        set mode print
+    else if set -q _flag_list_signals
+        set mode list
+    else
+        switch (count $argv)
+            case 0
+                set mode print
+            case 1
+                set mode clear
+            case '*'
+                if test $argv[1] = -
+                    set -e argv[1]
+                    set mode clear
+                else
+                    set mode set
+                end
+        end
+    end
 
-	set -l tmp (getopt $shortopt $longopt -- $argv)
+    switch $mode
+        case clear
+            for i in $argv
+                set sig (__trap_translate_signal $i)
+                if test -n "$sig"
+                    functions -e __trap_handler_$sig
+                end
+            end
 
-	eval set opt $tmp
+        case set
+            set -l cmd $argv[1]
+            set -e argv[1]
 
-	while count $opt >/dev/null
-		switch $opt[1]
-			case -h --help
-				__fish_print_help trap
-				return 0
+            for i in $argv
+                set -l sig (__trap_translate_signal $i)
+                set -l sw (__trap_switch $sig)
 
-			case -p --print
-				set mode print
+                if test -n "$sig"
+                    echo "function __trap_handler_$sig $sw; $cmd; end" | source
+                else
+                    return 1
+                end
+            end
 
-			case -l --list-signals
-				set mode list
+        case print
+            set -l names
+            if set -q argv[1]
+                set names $argv
+            else
+                set names (functions -na | string match "__trap_handler_*" | string replace '__trap_handler_' '')
+            end
 
-			case --
-				 set -e opt[1]
-				 break
+            for i in $names
+                set sig (__trap_translate_signal $i)
 
-		end
-		set -e opt[1]
-	end
+                if test -n "$sig"
+                    functions __trap_handler_$i
+                else
+                    return 1
+                end
+            end
 
-	if not count $mode >/dev/null
-
-		switch (count $opt)
-
-			case 0
-				set mode print
-
-			case 1
-				set mode clear
-
-			case '*'
-				if test opt[1] = -
-					set -e opt[1]
-					set mode clear
-				else
-					set mode set
-				end
-		end
-	end
-
-	switch $mode
-		case clear
-			for i in $opt
-				set sig (__trap_translate_signal $i)
-				if test $sig
-					functions -e __trap_handler_$sig
-				end
-			end
-
-		case set
-			set -l cmd $opt[1]
-			set -e opt[1]
-
-			for i in $opt
-
-				set -l sig (__trap_translate_signal $i)
-				set sw (__trap_switch $sig)
-
-				if test $sig
-					eval "function __trap_handler_$sig $sw; $cmd; end"
-				else
-					return 1
-				end
-			end
-
-		case print
-			set -l names
-
-			if count $opt >/dev/null
-				set names $opt
-			else
-				set names (functions -na|sgrep "^__trap_handler_"|sed -e 's/__trap_handler_//' )
-			end
-
-			for i in $names
-
-				set sig (__trap_translate_signal $i)
-
-				if test sig
-					functions __trap_handler_$i
-				else
-					return 1
-				end
-
-			end
-
-		case list
-			kill -l
-
-	end
-
+        case list
+            kill -l
+    end
 end

@@ -1,3 +1,1 @@
-__fish_complete_tex pdfelatex
-
-
+complete -c pdfelatex -w tex

@@ -1,31 +1,39 @@
-#!/bin/sh -x
+#!/usr/bin/env bash
 
-make distclean
-rm -rf /tmp/fish_pkg
-mkdir -p /tmp/fish_pkg/
+# Script to produce an OS X installer .pkg and .app(.zip)
 
-# Make sure what we build can run on SnowLeopard
-export OSX_SDK="/Developer/SDKs/MacOSX10.6.sdk"
-export MACOSX_DEPLOYMENT_TARGET="10.6"
-export CC="clang -isysroot $OSX_SDK -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
-export CCX="clang++ -isysroot $OSX_SDK -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
-export CFLAGS="$CFLAGS -isysroot $OSX_SDK -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
-export CXXFLAGS="$CXXFLAGS -isysroot $OSX_SDK -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
-export LDFLAGS="$LDFLAGS -isysroot $OSX_SDK -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
-autoconf
-./configure --without-xsel
-
-# Actually build it now
-if make -j 4 DESTDIR=/tmp/fish_pkg install
-then
-	echo "Root written to /tmp/fish_pkg/"
-	if /Developer/usr/bin/packagemaker --doc ./build_tools/fish_shell.pmdoc --out ~/fish_built/fishfish.pkg
-	then
-		echo "Package written to ~/fish_built/fishfish.pkg"
-	else
-		echo "Package could not be written"
-	fi
-	
-else
-	echo "Root could not be written"
+VERSION=$(git describe --always --dirty 2>/dev/null)
+if test -z "$VERSION" ; then
+  echo "Could not get version from git"
+  if test -f version; then
+    VERSION=$(cat version)
+  fi
 fi
+
+echo "Version is $VERSION"
+
+set -x
+
+#Exit on error
+set -e
+
+# Respect MAC_CODESIGN_ID and MAC_PRODUCTSIGN_ID, or default for ad-hoc.
+# Note the :- means "or default" and the following - is the value.
+MAC_CODESIGN_ID=${MAC_CODESIGN_ID:--}
+MAC_PRODUCTSIGN_ID=${MAC_PRODUCTSIGN_ID:--}
+
+PKGDIR=$(mktemp -d)
+
+SRC_DIR=$PWD
+OUTPUT_PATH=${FISH_ARTEFACT_PATH:-~/fish_built}
+
+mkdir -p "$PKGDIR/build" "$PKGDIR/root" "$PKGDIR/intermediates" "$PKGDIR/dst"
+{ cd "$PKGDIR/build" && cmake -DMAC_INJECT_GET_TASK_ALLOW=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMAC_CODESIGN_ID="${MAC_CODESIGN_ID}" "$SRC_DIR" && make -j 12 && env DESTDIR="$PKGDIR/root/" make install; }
+pkgbuild --scripts "$SRC_DIR/build_tools/osx_package_scripts" --root "$PKGDIR/root/" --identifier 'com.ridiculousfish.fish-shell-pkg' --version "$VERSION" "$PKGDIR/intermediates/fish.pkg"
+productbuild  --package-path "$PKGDIR/intermediates" --distribution "$SRC_DIR/build_tools/osx_distribution.xml" --resources "$SRC_DIR/build_tools/osx_package_resources/" "$OUTPUT_PATH/fish-$VERSION.pkg"
+productsign --sign "${MAC_PRODUCTSIGN_ID}" "$OUTPUT_PATH/fish-$VERSION.pkg" "$OUTPUT_PATH/fish-$VERSION-signed.pkg" && mv "$OUTPUT_PATH/fish-$VERSION-signed.pkg" "$OUTPUT_PATH/fish-$VERSION.pkg"
+
+# Make the app
+{ cd "$PKGDIR/build" && make signed_fish_macapp && zip -r "$OUTPUT_PATH/fish-$VERSION.app.zip" fish.app; }
+
+rm -r "$PKGDIR"

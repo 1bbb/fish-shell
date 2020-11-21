@@ -1,2 +1,1 @@
-__fish_complete_tex omega
-
+complete -c omega -w tex

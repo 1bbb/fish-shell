@@ -1,2 +1,1 @@
-__fish_complete_tex lualatex
-
+complete -c lualatex -w tex

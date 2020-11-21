@@ -1,51 +1,67 @@
 #
-# Load common ssh options
+# Load completions shared by ssh and scp.
 #
-
 __fish_complete_ssh scp
+
+# Helper functions to simplify the completions.
+function __scp2ssh_port_number
+    # There is a silly inconsistency between the ssh and scp commands regarding the short flag name
+    # for specifying the TCP port number. This function deals with that by extracting the port
+    # number if present and emitting it as a flag appropriate for ssh.
+    set -l port (commandline -c | string match -r -- ' -P ?(\d+)\b')
+    and echo -p\n$port[2]
+end
+
+function __scp_remote_target
+    set -l target (commandline -ct | string match -r -- '(.*):')
+    and echo $target[2]
+end
+
+function __scp_remote_path_prefix
+    set -l path_prefix (commandline -ct | string match -r -- ':(.*)')
+    and echo $path_prefix[2]
+end
+
+function __fish_no_scp_remote_specified
+    set -l tokens (commandline -t)
+    # can't use `for token in tokens[1..-2]` due to https://github.com/fish-shell/fish-shell/issues/4897
+    set -e tokens[-1]
+    for token in $tokens # ignoring current token
+        if string match -e @ -- $token
+            return 1
+        end
+    end
+    return 0
+end
 
 #
 # scp specific completions
 #
 
-complete -c scp -d Hostname -a "
+#
+# Inherit user/host completions from ssh
+#
+complete -c scp -d Remote -n "__fish_no_scp_remote_specified; and not string match -e : (commandline -ct)" -a "(complete -C'ssh ' | string replace -r '\t.*' ':')"
 
-(
-	#Find a suitable hostname from the knownhosts files
-	cat ~/.ssh/known_hosts{,2} ^/dev/null|cut -d ' ' -f 1| cut -d , -f 1
-):
-
-(
-	#Prepend any username specified in the completion to the hostname
-	echo (commandline -ct)|sed -ne 's/\(.*@\).*/\1/p'
-)(
-	cat ~/.ssh/known_hosts{,2} ^/dev/null|cut -d ' ' -f 1| cut -d , -f 1
-):
-
-(__fish_print_users)@\tUsername
-
-"
+#
+# Local path
+#
+complete -c scp -d "Local Path" -n "not string match @ -- (commandline -ct)"
 
 #
 # Remote path
 #
-complete -c scp -d "Remote Path" -n "echo (commandline -ct)|sgrep -o '.*:';and true" -a "
-
-(
-	#Prepend any user@host information supplied before the remote completion
-	echo (commandline -ct)|sgrep -o '.*:'
-)(
-	#Get the list of remote files from the specified ssh server
-	ssh -o \"BatchMode yes\" (echo (commandline -ct)|sed -ne 's/\(.*\):.*/\1/p') ls\ -d\ (echo (commandline -ct)|sed -ne 's/.*://p')\*
+# Get the list of remote files from the scp target.
+complete -c scp -d "Remote Path" -f -n "commandline -ct | string match -e ':'" -a "
+(__scp_remote_target):( \
+        command ssh (__scp2ssh_port_number) -o 'BatchMode yes' (__scp_remote_target) ls\ -dp\ (__scp_remote_path_prefix | string unescape)\* 2>/dev/null |
+        string escape -n
 )
-
 "
-
-complete -c scp -s B --description "Batch mode"
-complete -c scp -s l -x --description "Bandwidth limit"
-complete -c scp -s P -x --description "Port"
-complete -c scp -s p --description "Preserves modification times, access times, and modes from the original file"
-complete -c scp -s q --description "Do not display progress bar"
-complete -c scp -s r --description "Recursively copy"
-complete -c scp -s S --description "Encyption program"
-
+complete -c scp -s B -d "Batch mode"
+complete -c scp -s l -x -d "Bandwidth limit"
+complete -c scp -s P -x -d Port
+complete -c scp -s p -d "Preserves modification times, access times, and modes from the original file"
+complete -c scp -s q -d "Do not display progress bar"
+complete -c scp -s r -d "Recursively copy"
+complete -c scp -s S -d "Encryption program"

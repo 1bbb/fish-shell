@@ -1,55 +1,38 @@
+# This function only emits completions that might result from matches against $CDPATH. We rely on
+# the core file name completion logic to include all other possible matches.
 function __fish_complete_cd -d "Completions for the cd command"
-	false
+    set -q CDPATH[1]
+    or return 0 # no CDPATH so rely solely on the core file name completions
+
+    set -l token (commandline -ct)
+    if string match -qr '^\.{0,2}/.*' -- $token
+        # Absolute path or explicitly relative to the current directory. Rely on the builtin file
+        # name completions since we no longer exclude them from the `cd` argument completion.
+        return
+    end
+
+    # Relative path. Check $CDPATH and use that as the description for any possible matches.
+    # We deliberately exclude the `.` path because the core file name completion logic will include
+    # it when presenting possible matches.
+    set -l cdpath (string match -v '.' -- $CDPATH)
+
+    # Remove the CWD if it is in CDPATH since, again, the core file name completion logic will
+    # handle it.
+    set -l cdpath (string match -v -- $PWD $cdpath)
+    set -q cdpath[1]
+    or return 0
+
+    # TODO: There's a subtlety regarding descriptions - if $cdpath[1]/foo and $cdpath[2]/foo
+    # exist, we print both but want the first description to win - this currently works, but
+    # is not guaranteed.
+    for cdpath in $cdpath
+        # Replace $HOME with "~".
+        set -l desc (string replace -r -- "^$HOME" "~" "$cdpath")
+        # This assumes the CDPATH component itself is cd-able.
+        for d in $cdpath/$token*/
+            # Remove the cdpath component again.
+            test -x $d
+            and printf "%s\tCDPATH %s\n" (string replace -r "^$cdpath/" "" -- $d) $desc
+        end
+    end
 end
-
-
-function __fish_complete_cd -d "Completions for the cd command"
-	#
-	# We can't simply use __fish_complete_directories because of the CDPATH
-	#
-	set -l wd $PWD
-
-	# Check if CDPATH is set
-
-	set -l mycdpath
-
-	if test -z $CDPATH[1]
-		set mycdpath .
-	else
-		set mycdpath $CDPATH
-	end
-
-	# Note how this works: we evaluate $ctoken*/
-	# That trailing slash ensures that we only expand directories
-
-    set -l ctoken (commandline -ct)
-	if echo $ctoken | sgrep '^/\|^\./\|^\.\./\|^~/' >/dev/null
-		# This is an absolute search path
-		# Squelch descriptions per issue 254
-		eval printf '\%s\\n' $ctoken\*/
-	else
-		# This is a relative search path
-		# Iterate over every directory in CDPATH
-		# and check for possible completions
-
-		for i in $mycdpath
-			# Move to the initial directory first,
-			# in case the CDPATH directory is relative
-
-			builtin cd $wd
-			eval builtin cd $i
-
-			# What we would really like to do is skip descriptions if all
-			# valid paths are in the same directory, but we don't know how to
-			# do that yet; so instead skip descriptions if CDPATH is just .
-			if test "$mycdpath" = .
-				eval printf '"%s\n"' $ctoken\*/
-			else
-				eval printf '"%s\tin "'$i'"\n"' $ctoken\*/
-			end
-		end
-	end
-
-	builtin cd $wd
-end
-

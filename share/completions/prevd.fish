@@ -1,1 +1,1 @@
-complete -c prevd -s l --description "Also print directory history"
+complete -c prevd -s l -l list -d "Also print directory history"

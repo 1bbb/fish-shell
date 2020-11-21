@@ -1,80 +1,72 @@
-
-
 function psub --description "Read from stdin into a file and output the filename. Remove the file when the command that called psub exits."
+    set -l options -x 'f,F' -x 'F,s' h/help f/file F/fifo 's/suffix=' T-testing
+    argparse -n psub --max-args=0 $options -- $argv
+    or return
 
-	set -l filename
-	set -l funcname
-	set -l use_fifo 1
-	set -l shortopt -o hf
-	set -l longopt -l help,file
+    if set -q _flag_help
+        __fish_print_help psub
+        return 0
+    end
 
-	if getopt -T >/dev/null
-		set longopt
-	end
+    set -l dirname
+    set -l filename
+    set -l funcname
 
-	if not getopt -n psub -Q $shortopt $longopt -- $argv >/dev/null
-		return 1
-	end
+    if not status --is-command-substitution
+        printf (_ "%s: Not inside of command substitution") psub >&2
+        return 1
+    end
 
-	set -l tmp (getopt $shortopt $longopt -- $argv)
+    set -l tmpdir /tmp
+    set -q TMPDIR
+    and set tmpdir $TMPDIR
 
-	eval set opt $tmp
+    if set -q _flag_fifo
+        # Write output to pipe. This needs to be done in the background so
+        # that the command substitution exits without needing to wait for
+        # all the commands to exit.
+        set dirname (mktemp -d $tmpdir/.psub.XXXXXXXXXX)
+        or return 1
+        set filename $dirname/psub.fifo"$_flag_suffix"
+        command mkfifo $filename
+        # Note that if we were to do the obvious `cat >$filename &`, we would deadlock
+        # because $filename may be opened before the fork. Use tee to ensure it is opened
+        # after the fork.
+        command tee $filename >/dev/null &
+    else if test -z "$_flag_suffix"
+        set filename (mktemp $tmpdir/.psub.XXXXXXXXXX)
+        or return 1
+        command cat >$filename
+    else
+        set dirname (mktemp -d $tmpdir/.psub.XXXXXXXXXX)
+        or return 1
+        set filename "$dirname/psub$_flag_suffix"
+        command cat >$filename
+    end
 
-	while count $opt >/dev/null
+    # Write filename to stdout
+    echo $filename
 
-		switch $opt[1]
-			case -h --help
-				__fish_print_help psub
-				return 0
+    # This flag isn't documented. It's strictly for our unit tests.
+    if set -q _flag_testing
+        return
+    end
 
-			case -f --file
-				set use_fifo 0
+    # Find unique function name
+    while true
+        set funcname __fish_psub_(random)
+        if not functions $funcname >/dev/null 2>/dev/null
+            break
+        end
+    end
 
-			case --
-				set -e opt[1]
-				break
-
-		end
-
-		set -e opt[1]
-
-	end
-
-	if not status --is-command-substitution
-		echo psub: Not inside of command substitution >&2
-		return
-	end
-
-	# Find unique file name for writing output to
-	while true
-		set filename /tmp/.psub.(echo %self).(random);
-		if not test -e $filename
-			break;
-		end
-	end
-
-	if test use_fifo = 1
-		# Write output to pipe. This needs to be done in the background so
-		# that the command substitution exits without needing to wait for
-		# all the commands to exit
-		mkfifo $filename
-		cat >$filename &
-	else
-		cat >$filename
-	end
-
-	# Write filename to stdout
-	echo $filename
-
-	# Find unique function name
-	while true
-		set funcname __fish_psub_(random);
-		if not functions $funcname >/dev/null ^/dev/null
-			break;
-		end
-	end
-
-	# Make sure we erase file when caller exits
-	eval function $funcname --on-job-exit caller\; command rm $filename\; functions -e $funcname\; end
+    # Make sure we erase file when caller exits
+    function $funcname --on-job-exit caller --inherit-variable filename --inherit-variable dirname --inherit-variable funcname
+        command rm $filename
+        if test -n "$dirname"
+            command rmdir $dirname
+        end
+        functions -e $funcname
+    end
 
 end
